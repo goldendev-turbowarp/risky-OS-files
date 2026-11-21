@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>risky OS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --accent:#4f8cff; --fs:clamp(9px,2.3vmin,17px);
+  --win-bg:#1e222b; --win-fg:#e8ecf3; --bar:#14171e; --bar2:#262b36; --line:#343a48; --muted:#8b93a5;
+  --ok:#3ecf8e; --err:#ff6b6b;
+}
+:root[data-theme="light"]{
+  --win-bg:#f4f6fa; --win-fg:#1b2030; --bar:#e3e7ef; --bar2:#d3d9e5; --line:#b9c1d1; --muted:#5d6678;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;font:var(--fs)/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--win-fg);user-select:none}
+#desktop{position:fixed;inset:0 0 2.8em 0;background:linear-gradient(135deg,#1b2735,#3a2a5c 60%,#7a3b69);overflow:hidden}
+#icons{position:absolute;inset:0;padding:.8em;display:flex;flex-direction:column;flex-wrap:wrap;align-content:flex-start;gap:.4em}
+.dicon{width:5.4em;padding:.4em .2em;text-align:center;border-radius:.5em;color:#fff;cursor:default;text-shadow:0 1px 3px #000a}
+.dicon:hover{background:#ffffff22}.dicon.sel{background:#ffffff38}
+.dicon .g{font-size:2.2em;line-height:1.1}.dicon .t{font-size:.85em;word-break:break-word}
+.win{position:absolute;display:flex;flex-direction:column;background:var(--win-bg);border:1px solid var(--line);border-radius:.6em;box-shadow:0 .6em 2em #0007;overflow:hidden;min-width:14em;min-height:8em}
+.win.focus{border-color:var(--accent)}
+.win.max{inset:0!important;width:auto!important;height:auto!important;border-radius:0}
+.win.min{display:none}
+.tb{display:flex;align-items:center;gap:.4em;padding:.25em .4em .25em .7em;background:var(--bar);cursor:default;flex:none}
+.tb .ti{flex:1;font-weight:600;font-size:.92em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb button{width:1.7em;height:1.7em;border:0;border-radius:.35em;background:transparent;color:var(--win-fg);cursor:pointer;font-size:.9em}
+.tb button:hover{background:var(--bar2)}.tb button.x:hover{background:var(--err);color:#fff}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+.rz{position:absolute;right:0;bottom:0;width:1em;height:1em;cursor:nwse-resize}
+.rz::after{content:"";position:absolute;right:.2em;bottom:.2em;width:.5em;height:.5em;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted)}
+#task{position:fixed;left:0;right:0;bottom:0;height:2.8em;background:var(--bar);border-top:1px solid var(--line);display:flex;align-items:center;gap:.3em;padding:0 .4em;color:var(--win-fg)}
+#start{height:2.1em;padding:0 .9em;border:0;border-radius:.4em;background:var(--accent);color:#fff;font-weight:700;cursor:pointer}
+#tasks{flex:1;display:flex;gap:.3em;overflow:hidden}
+.tbtn{max-width:11em;padding:0 .8em;height:2.1em;border:0;border-radius:.4em;background:var(--bar2);color:var(--win-fg);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tbtn.on{box-shadow:inset 0 -.2em var(--accent)}.tbtn.m{opacity:.6}
+#tray{display:flex;align-items:center;gap:.7em;font-size:.9em;color:var(--muted)}
+#dot{display:inline-block;width:.7em;height:.7em;border-radius:50%;background:#d9a441;margin-right:.3em}
+#menu{position:fixed;left:.4em;bottom:3.1em;width:14em;background:var(--bar);border:1px solid var(--line);border-radius:.6em;padding:.4em;display:none;box-shadow:0 .6em 2em #0007;z-index:99999}
+#menu.show{display:block}
+#menu div{padding:.5em .7em;border-radius:.4em;cursor:pointer}
+#menu div:hover{background:var(--accent);color:#fff}#menu hr{border:0;border-top:1px solid var(--line);margin:.3em 0}
+.tool{display:flex;gap:.3em;padding:.35em;background:var(--bar);border-bottom:1px solid var(--line);flex:none;align-items:center}
+.tool button,.btn{padding:.25em .7em;border:1px solid var(--line);border-radius:.35em;background:var(--bar2);color:var(--win-fg);cursor:pointer;font:inherit}
+.tool button:hover,.btn:hover{border-color:var(--accent)}
+input,textarea{font:inherit;color:var(--win-fg);background:var(--bar);border:1px solid var(--line);border-radius:.35em;padding:.25em .5em;user-select:text;outline:none}
+input:focus,textarea:focus{border-color:var(--accent)}
+.grow{flex:1;min-width:0}
+.files{flex:1;overflow:auto;padding:.6em;display:flex;flex-wrap:wrap;align-content:flex-start;gap:.3em}
+.fi{width:5.6em;padding:.4em .2em;text-align:center;border-radius:.4em;cursor:default}
+.fi:hover{background:var(--bar2)}.fi.sel{background:var(--accent);color:#fff}
+.fi .g{font-size:2em}.fi .t{font-size:.85em;word-break:break-all}
+.empty{color:var(--muted);padding:1em}
+textarea.np{flex:1;resize:none;border:0;border-radius:0;font-family:ui-monospace,Menlo,Consolas,monospace;padding:.6em}
+.status{padding:.25em .7em;font-size:.85em;color:var(--muted);background:var(--bar);border-top:1px solid var(--line);flex:none}
+.term{flex:1;overflow:auto;padding:.6em;background:#0c0e12;color:#cfe8d5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.95em;user-select:text;white-space:pre-wrap;word-break:break-word}
+.term .e{color:var(--err)}.term .d{color:#6f7a8f}.term .p{color:#7fb6ff}
+.tin{display:flex;gap:.4em;padding:.4em .6em;background:#0c0e12;border-top:1px solid #222a36;font-family:ui-monospace,Menlo,Consolas,monospace}
+.tin span{color:#7fb6ff;white-space:nowrap}.tin input{flex:1;border:0;background:transparent;color:#cfe8d5;padding:0}
+.log{flex:1;overflow:auto;padding:.5em;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88em;user-select:text}
+.log div{padding:.3em .4em;border-bottom:1px solid var(--line);word-break:break-all}.log .bad{color:var(--err)}.log small{color:var(--muted)}
+.set{padding:.8em;display:flex;flex-direction:column;gap:.9em;overflow:auto}
+.set h4{margin-bottom:.3em;font-size:.95em}.sw{display:flex;gap:.4em;flex-wrap:wrap}
+.sw i{width:2.4em;height:1.6em;border-radius:.3em;border:2px solid transparent;cursor:pointer;display:block}.sw i.on{border-color:#fff;outline:2px solid var(--accent)}
+#modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:100000}
+#modal.show{display:flex}
+#modal .box{background:var(--win-bg);border:1px solid var(--line);border-radius:.6em;padding:1em;min-width:18em;max-width:90%;display:flex;flex-direction:column;gap:.7em}
+#modal .row{display:flex;gap:.5em;justify-content:flex-end}
+</style>
+</head>
+<body>
+<div id="desktop"><div id="icons"></div></div>
+<div id="menu"></div>
+<div id="task">
+  <button id="start">risky OS</button>
+  <div id="tasks"></div>
+  <div id="tray"><span><i id="dot"></i><span id="bk">...</span></span><span id="clock"></span></div>
+</div>
+<div id="modal"><div class="box" id="mbox"></div></div>
+
+<script>
+'use strict';
+/* ==================== CONFIG ==================== */
+const CFG = {
+  mkdirTrailingSlash: false,   // mude para true se o seu rxFS2 espera "/pasta/" ao criar pastas
+  callTimeoutMs: 12000,
+  rootDir: '/',
+  desktopDir: '/home/desktop'
+};
+
+/* ==================== BRIDGE (backend) ==================== */
+/* Protocolo com o TurboWarp (ponte JS rodando na pagina principal):
+   frontend -> pagina : {__risky:1, type:'ping'}                       pagina -> frontend : {type:'pong'}
+   frontend -> pagina : {__risky:1, type:'call', id, payload:{...}}    pagina -> frontend : {type:'result', id, result, error}
+   payload = {command:'bash', 'bash-command':'mkdir', arg1:'/x', arg2:'', arg3:'', arg4:''}  */
+const Bridge = (() => {
+  const inFrame = window.parent !== window;
+  const listeners = new Set(), logs = [];
+  let mode = inFrame ? 'connecting' : 'mock';
+  let seq = 0; const pending = new Map();
+  const setMode = m => { mode = m; listeners.forEach(f => f({ mode })); };
+
+  window.addEventListener('message', e => {
+    const d = e.data; if (e.source !== parent || !d || d.__risky !== 1) return;
+    if (d.type === 'pong') { if (mode !== 'turbowarp') setMode('turbowarp'); }
+    else if (d.type === 'result') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d); } }
+  });
+  if (inFrame) {
+    let tries = 0;
+    (function ping(){
+      if (mode === 'turbowarp') return;
+      parent.postMessage({ __risky: 1, type: 'ping' }, '*');
+      if (++tries === 8 && mode === 'connecting') setMode('mock');   // ~5s sem resposta => demo
+      setTimeout(ping, 650);
+    })();
+  }
+
+  /* ---- backend de mentira (so para testar fora do TurboWarp) ---- */
+  const mockFS = new Map([
+    ['/home/', ''], ['/home/desktop/', ''], ['/home/bem-vindo.txt', 'Ola! Este e o modo demo do risky OS.\nAbra dentro do TurboWarp para usar o backend real.'],
+    ['/system/', ''], ['/storage/', ''], ['/storage/modules/', '']
+  ]);
+  function mock(cmd, a1, a2) {
+    switch (cmd) {
+      case 'echo': console.log('[mock log]', a1); return 'ok';
+      case 'mkdir': { const p = a1.replace(/\/+$/, ''); mockFS.set(p + '/', ''); return 'ok'; }
+      case 'write': mockFS.set(a1, a2 || ''); return 'ok';
+      case 'rm': { const p = a1.replace(/\/+$/, ''); for (const k of [...mockFS.keys()]) if (k === p || k === p + '/' || k.startsWith(p + '/')) mockFS.delete(k); return 'ok'; }
+      case 'cat': return mockFS.has(a1) ? mockFS.get(a1) : '';
+      case 'lsfs': return JSON.stringify([...mockFS.keys()]);
+      default: return '';
+    }
+  }
+
+  function rawCall(payload) {
+    if (mode === 'mock') {
+      return new Promise(r => setTimeout(() => r({ result: mock(payload['bash-command'], payload.arg1 || '', payload.arg2 || '') }), 40));
+    }
+    return new Promise(resolve => {
+      const id = ++seq; let done = false;
+      const t = setTimeout(() => { if (!done) { pending.delete(id); resolve({ error: 'timeout (' + CFG.callTimeoutMs + 'ms) - o backend nao respondeu' }); } }, CFG.callTimeoutMs);
+      pending.set(id, d => { done = true; clearTimeout(t); resolve(d); });
+      parent.postMessage({ __risky: 1, type: 'call', id, payload }, '*');
+    });
+  }
+
+  async function bash(cmd, ...args) {
+    const payload = { command: 'bash', 'bash-command': cmd, arg1: '', arg2: '', arg3: '', arg4: '' };
+    args.slice(0, 4).forEach((v, i) => payload['arg' + (i + 1)] = String(v ?? ''));
+    const t0 = performance.now();
+    const d = await rawCall(payload);
+    const entry = { time: new Date(), mode, payload, result: d.result, error: d.error || null, ms: Math.round(performance.now() - t0) };
+    logs.unshift(entry); if (logs.length > 200) logs.pop();
+    listeners.forEach(f => f({ log: entry }));
+    if (d.error) throw new Error(d.error);
+    return d.result == null ? '' : String(d.result);
+  }
+
+  return { bash, logs, listeners, get mode() { return mode; } };
+})();
+
+/* ==================== FS helpers ==================== */
+const norm = p => { p = String(p || '').trim(); if (!p.startsWith('/')) p = '/' + p; p = p.replace(/\/{2,}/g, '/'); return p.length > 1 ? p.replace(/\/+$/, '') : p; };
+const join = (dir, name) => norm((dir === '/' ? '' : dir) + '/' + name);
+const parentOf = p => { p = norm(p); const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+const resolvePath = (cwd, p) => p.startsWith('/') ? norm(p) : join(cwd, p);
+
+function parseList(raw) {
+  raw = String(raw || '').trim(); if (!raw) return [];
+  try {
+    const j = JSON.parse(raw);
+    if (Array.isArray(j)) return j.map(String);
+    if (j && typeof j === 'object') return Object.keys(j);
+  } catch (e) {}
+  const q = [...raw.matchAll(/"((?:[^"\\]|\\.)+)"/g)].map(m => m[1]);
+  if (q.length) return q;
+  return raw.replace(/^[\[\]{}]+|[\[\]{}]+$/g, '').split(/[\n,;|]+/).map(s => s.trim()).filter(Boolean);
+}
+async function listFS() { return parseList(await Bridge.bash('lsfs')); }
+function readDir(paths, dir) {
+  dir = norm(dir); const pre = dir === '/' ? '/' : dir + '/'; const folders = new Set(), files = new Set();
+  for (let p of paths) {
+    p = String(p); if (!p.startsWith('/')) p = '/' + p;
+    if (!p.startsWith(pre) || p === pre) continue;
+    const rest = p.slice(pre.length); const i = rest.indexOf('/');
+    if (i === -1 && p === CFG.desktopDir) folders.add(rest);
+    else if (i === -1) files.add(rest);
+    else folders.add(rest.slice(0, i));
+  }
+  files.forEach(f => { if (folders.has(f)) files.delete(f); });
+  return { folders: [...folders].sort(), files: [...files].sort() };
+}
+
+/* ==================== UI helpers ==================== */
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, props = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') n.className = v; else if (k === 'text') n.textContent = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v); else n.setAttribute(k, v);
+  }
+  kids.flat().forEach(c => n.append(c)); return n;
+};
+function modal(build) {
+  return new Promise(res => {
+    const box = $('#mbox'); box.replaceChildren(); $('#modal').classList.add('show');
+    const close = v => { $('#modal').classList.remove('show'); res(v); };
+    build(box, close);
+  });
+}
+const askText = (title, def = '') => modal((box, close) => {
+  const inp = el('input', { value: def, class: 'grow' });
+  box.append(el('b', { text: title }), inp, el('div', { class: 'row' },
+    el('button', { class: 'btn', text: 'Cancelar', onclick: () => close(null) }),
+    el('button', { class: 'btn', text: 'OK', onclick: () => close(inp.value) })));
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter') close(inp.value); if (e.key === 'Escape') close(null); });
+  setTimeout(() => { inp.focus(); inp.select(); }, 0);
+});
+const askYes = msg => modal((box, close) => box.append(el('div', { text: msg }), el('div', { class: 'row' },
+  el('button', { class: 'btn', text: 'Nao', onclick: () => close(false) }),
+  el('button', { class: 'btn', text: 'Sim', onclick: () => close(true) }))));
+
+/* ==================== WINDOW MANAGER ==================== */
+const WM = (() => {
+  const wins = []; let zc = 10, cascade = 0;
+  const desk = $('#desktop'), tasks = $('#tasks');
+
+  function focus(w) {
+    if (!w) return; w.min = false; w.z = ++zc; wins.forEach(x => x.node.classList.toggle('focus', x === w));
+    w.node.style.zIndex = w.z; w.node.classList.remove('min'); render();
+  }
+  function render() {
+    tasks.replaceChildren(...wins.map(w => {
+      const top = !w.min && w.z === Math.max(...wins.filter(x => !x.min).map(x => x.z));
+      return el('button', { class: 'tbtn' + (top ? ' on' : '') + (w.min ? ' m' : ''), text: w.icon + ' ' + w.title,
+        onclick: () => { if (top) { w.min = true; w.node.classList.add('min'); render(); } else focus(w); } });
+    }));
+  }
+  function close(w) { w.onclose && w.onclose(); w.node.remove(); wins.splice(wins.indexOf(w), 1); render(); const t = wins.filter(x => !x.min).sort((a, b) => b.z - a.z)[0]; if (t) focus(t); }
+
+  function open(app, opts = {}) {
+    const dw = desk.clientWidth, dh = desk.clientHeight;
+    const W = Math.min(dw, Math.round(dw * (app.w || .55))), H = Math.min(dh, Math.round(dh * (app.h || .62)));
+    const off = (cascade++ % 6) * Math.round(dh * .05);
+    const w = { app, title: app.title, icon: app.icon, min: false, max: false, z: 0 };
+    const body = el('div', { class: 'body' });
+    const title = el('div', { class: 'ti', text: app.icon + ' ' + app.title });
+    const bMin = el('button', { text: '–', title: 'Minimizar', onclick: e => { e.stopPropagation(); w.min = true; w.node.classList.add('min'); render(); } });
+    const bMax = el('button', { text: '□', title: 'Maximizar', onclick: e => { e.stopPropagation(); toggleMax(); } });
+    const bX = el('button', { class: 'x', text: '✕', title: 'Fechar', onclick: e => { e.stopPropagation(); close(w); } });
+    const tb = el('div', { class: 'tb' }, title, bMin, bMax, bX);
+    const rz = el('div', { class: 'rz' });
+    const node = el('div', { class: 'win' }, tb, body, rz);
+    Object.assign(node.style, { left: Math.max(0, Math.round((dw - W) / 2) - 20 + off) + 'px', top: Math.max(0, Math.round((dh - H) / 3) + off) + 'px', width: W + 'px', height: H + 'px' });
+    w.node = node; w.body = body;
+    w.setTitle = t => { w.title = t; title.textContent = app.icon + ' ' + t; render(); };
+    function toggleMax() { w.max = !w.max; node.classList.toggle('max', w.max); }
+    node.addEventListener('pointerdown', () => focus(w), true);
+    tb.addEventListener('dblclick', toggleMax);
+
+    tb.addEventListener('pointerdown', e => {
+      if (e.target.tagName === 'BUTTON' || w.max) return;
+      const sx = e.clientX, sy = e.clientY, ox = node.offsetLeft, oy = node.offsetTop; tb.setPointerCapture(e.pointerId);
+      const mv = ev => { node.style.left = Math.min(dw - 40, Math.max(-W + 80, ox + ev.clientX - sx)) + 'px'; node.style.top = Math.min(dh - 30, Math.max(0, oy + ev.clientY - sy)) + 'px'; };
+      const up = () => { tb.removeEventListener('pointermove', mv); tb.removeEventListener('pointerup', up); };
+      tb.addEventListener('pointermove', mv); tb.addEventListener('pointerup', up);
+    });
+    rz.addEventListener('pointerdown', e => {
+      e.stopPropagation(); const sx = e.clientX, sy = e.clientY, ow = node.offsetWidth, oh = node.offsetHeight; rz.setPointerCapture(e.pointerId);
+      const mv = ev => { node.style.width = Math.max(200, ow + ev.clientX - sx) + 'px'; node.style.height = Math.max(120, oh + ev.clientY - sy) + 'px'; };
+      const up = () => { rz.removeEventListener('pointermove', mv); rz.removeEventListener('pointerup', up); };
+      rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up);
+    });
+
+    desk.append(node); wins.push(w); app.mount(body, w, opts); focus(w); return w;
+  }
+  return { open, wins };
+})();
+
+/* ==================== APPS ==================== */
+const Apps = {};
+let installingPackage = false;
+
+Apps.html = { id: 'html', title: 'HTML', icon: '🌐', w: .7, h: .7, mount(body, win, opts) {
+  const frame = el('iframe', { sandbox: 'allow-scripts allow-forms allow-modals', title: opts.file });
+  Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#fff' });
+  const onInstall = async e => {
+    const d = e.data;
+    if (e.source !== frame.contentWindow || !d || d.__riskyInstaller !== 1 || typeof d.id !== 'string' || d.id.length > 100) return;
+    if (d.type === 'hello') return e.source.postMessage({ __riskyInstaller: 1, type: 'ready', id: d.id }, '*');
+    if (d.type !== 'install') return;
+    const reply = (status, message) => e.source.postMessage({ __riskyInstaller: 1, type: 'result', id: d.id, status, message }, '*');
+    if (installingPackage || $('#modal').classList.contains('show')) return reply('error', 'Outra confirmacao esta em andamento.');
+    installingPackage = true;
+    try {
+      const validPath = value => typeof value === 'string' && value.length <= 160 && value.split('/').every(p => /^[a-zA-Z0-9._-]+$/.test(p) && p !== '.' && p !== '..');
+      if (typeof d.name !== 'string' || !/^[a-zA-Z0-9_-]{1,48}$/.test(d.name) || !validPath(d.entry) || !/\.html?$/i.test(d.entry) || !Array.isArray(d.files) || d.files.length < 1 || d.files.length > 30) throw new Error('Pacote de instalacao invalido.');
+      const names = new Set(); let size = 0;
+      for (const item of d.files) {
+        if (!Array.isArray(item) || item.length !== 2 || !validPath(item[0]) || typeof item[1] !== 'string' || names.has(item[0])) throw new Error('Arquivo invalido no pacote.');
+        names.add(item[0]); size += item[1].length;
+      }
+      if (!names.has(d.entry) || size > 1500000) throw new Error('Pacote de instalacao invalido ou muito grande.');
+      const root = '/program files/' + d.name, shortcut = CFG.desktopDir + '/' + d.name + '.shortcut';
+      const existing = new Set(await listFS());
+      const replacements = d.files.map(item => root + '/' + item[0]).concat(shortcut).filter(path => existing.has(path));
+      const notice = 'O programa ' + opts.file + ' deseja instalar ' + d.name + ' em ' + root + ' e criar o atalho ' + shortcut + '. Arquivos: ' + [...names].join(', ') + '.' + (replacements.length ? ' Os seguintes arquivos serao substituidos: ' + replacements.join(', ') + '.' : '');
+      if (!(await askYes(notice))) return reply('cancelled', 'Instalacao cancelada.');
+      if (!frame.isConnected) return;
+      const dirs = new Set(['/program files', root, CFG.desktopDir]);
+      for (const [name] of d.files) {
+        let dir = root;
+        for (const part of name.split('/').slice(0, -1)) { dir += '/' + part; dirs.add(dir); }
+      }
+      for (const dir of dirs) await Bridge.bash('mkdir', dir + (CFG.mkdirTrailingSlash ? '/' : ''));
+      for (const [name, content] of d.files) {
+        const path = root + '/' + name;
+        await Bridge.bash('write', path, content);
+        if (await Bridge.bash('cat', path) !== content) throw new Error('Nao foi possivel verificar ' + path + '.');
+      }
+      await Bridge.bash('write', shortcut, root + '/' + d.entry);
+      if (await Bridge.bash('cat', shortcut) !== root + '/' + d.entry) throw new Error('Nao foi possivel verificar o atalho.');
+      await refreshDesktop();
+      reply('ok', 'Instalacao concluida. Abra o atalho no desktop.');
+    } catch (error) { reply('error', error.message); }
+    finally { installingPackage = false; }
+  };
+  window.addEventListener('message', onInstall);
+  win.onclose = () => window.removeEventListener('message', onInstall);
+  frame.srcdoc = opts.html;
+  body.append(frame);
+  if (opts.warnings.length) body.append(el('div', { class: 'status', text: opts.warnings.join(' | ') }));
+  win.setTitle(opts.file.split('/').pop());
+} };
+
+async function prepareHTML(html, file, paths) {
+  const available = new Set(paths), warnings = new Set();
+  const localPath = (value, base) => {
+    value = value.trim();
+    if (!value || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(value)) return null;
+    let path = value.split(/[?#]/, 1)[0];
+    try { path = decodeURIComponent(path); } catch (e) {}
+    const parts = (path.startsWith('/') ? path : parentOf(base) + '/' + path).split('/'), result = [];
+    for (const part of parts) {
+      if (part === '..') result.pop();
+      else if (part && part !== '.') result.push(part);
+    }
+    return '/' + result.join('/');
+  };
+  async function resourceURL(value, base, kind, stack = []) {
+    const path = localPath(value, base);
+    if (path === null) return value;
+    if (!available.has(path)) { warnings.add('Arquivo nao encontrado: ' + path); return 'data:,'; }
+    if (stack.includes(path)) { warnings.add('Referencia circular: ' + path); return 'data:,'; }
+    let content = await Bridge.bash('cat', path);
+    if (kind === 'asset' && /^data:/i.test(content.trim())) return content.trim();
+    if (kind === 'asset' && /\.css$/i.test(path)) kind = 'css';
+    if (kind === 'asset' && !/\.svg$/i.test(path)) {
+      warnings.add('Formato de recurso nao suportado: ' + path);
+      return 'data:,';
+    }
+    if (kind === 'css') content = await rewriteCSS(content, path, [...stack, path]);
+    const type = kind === 'css' ? 'text/css' : kind === 'script' ? 'text/javascript' : 'image/svg+xml';
+    return 'data:' + type + ';charset=utf-8,' + encodeURIComponent(content);
+  }
+  async function rewriteCSS(css, base, stack = []) {
+    const pattern = /(?:@import\s+)?url\(\s*(?:(['"])(.*?)\1|([^'")]*))\s*\)|@import\s+(['"])(.*?)\4/gi;
+    let out = '', last = 0;
+    for (const match of css.matchAll(pattern)) {
+      const value = match[2] ?? match[3] ?? match[5];
+      const imported = /^@import/i.test(match[0]);
+      const url = await resourceURL(value, base, imported ? 'css' : 'asset', stack);
+      out += css.slice(last, match.index) + (url === value ? match[0] : (imported ? '@import ' : '') + 'url("' + url + '")');
+      last = match.index + match[0].length;
+    }
+    return out + css.slice(last);
+  }
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const node of doc.querySelectorAll('script[src], link[rel~="stylesheet" i][href], img[src]')) {
+    const attr = node.localName === 'link' ? 'href' : 'src';
+    const kind = node.localName === 'link' ? 'css' : node.localName === 'script' ? 'script' : 'asset';
+    node.setAttribute(attr, await resourceURL(node.getAttribute(attr), file, kind));
+  }
+  for (const node of doc.querySelectorAll('style')) node.textContent = await rewriteCSS(node.textContent, file);
+  for (const node of doc.querySelectorAll('[style]')) node.setAttribute('style', await rewriteCSS(node.getAttribute('style'), file));
+  return { html: '<!DOCTYPE html>\n' + doc.documentElement.outerHTML, warnings: [...warnings] };
+}
+
+async function openPath(file) {
+  file = norm(file);
+  if (/\.shortcut$/i.test(file)) {
+    const target = String(await Bridge.bash('cat', file)).trim();
+    if (!target.startsWith('/') || !/\.html?$/i.test(target)) throw new Error('O atalho deve conter o caminho absoluto de um arquivo HTML.');
+    file = norm(target);
+  }
+  if (/\.html?$/i.test(file)) {
+    const paths = await listFS();
+    if (!paths.includes(file)) throw new Error('Arquivo nao encontrado: ' + file);
+    const html = await Bridge.bash('cat', file);
+    if (!html.trim()) throw new Error('Arquivo HTML vazio: ' + file);
+    WM.open(Apps.html, { file, ...await prepareHTML(html, file, paths) });
+  } else {
+    WM.open(Apps.notepad, { file });
+  }
+}
+
+function showError(error) {
+  return modal((box, close) => box.append(el('div', { text: 'Erro: ' + error.message }),
+    el('div', { class: 'row' }, el('button', { class: 'btn', text: 'OK', onclick: () => close() }))));
+}
+
+/* ---- Arquivos ---- */
+Apps.files = { id: 'files', title: 'Arquivos', icon: '📁', w: .6, h: .66, mount(body, win, opts) {
+  let cwd = norm(opts.dir || CFG.rootDir), sel = null, paths = [];
+  const path = el('input', { class: 'grow' });
+  path.addEventListener('keydown', e => { if (e.key === 'Enter') go(path.value); });
+  const list = el('div', { class: 'files' }), st = el('div', { class: 'status' });
+  const go = d => { cwd = norm(d); sel = null; refresh(); };
+  async function refresh() {
+    path.value = cwd; st.textContent = 'Carregando...';
+    try { paths = await listFS(); } catch (e) { st.textContent = 'Erro: ' + e.message; return; }
+    const { folders, files } = readDir(paths, cwd);
+    list.replaceChildren();
+    const mk = (name, isDir) => {
+      const full = join(cwd, name);
+      const n = el('div', { class: 'fi' + (sel === full ? ' sel' : '') }, el('div', { class: 'g', text: isDir ? '📁' : '📄' }), el('div', { class: 't', text: name }));
+      n.addEventListener('click', () => { sel = full; [...list.children].forEach(c => c.classList.remove('sel')); n.classList.add('sel'); });
+      n.addEventListener('dblclick', () => { if (isDir) go(full); else openPath(full).catch(showError); });
+      n._isDir = isDir; n._full = full; list.append(n);
+    };
+    folders.forEach(f => mk(f, true)); files.forEach(f => mk(f, false));
+    if (!folders.length && !files.length) list.append(el('div', { class: 'empty', text: 'Pasta vazia.' }));
+    st.textContent = folders.length + ' pasta(s), ' + files.length + ' arquivo(s) - ' + paths.length + ' item(ns) no total';
+  }
+  const act = async fn => { try { await fn(); await refreshDesktop(); } catch (e) { st.textContent = 'Erro: ' + e.message; return; } refresh(); };
+  const bar = el('div', { class: 'tool' },
+    el('button', { text: '↑', title: 'Subir', onclick: () => go(parentOf(cwd)) }), path,
+    el('button', { text: '⟳', title: 'Atualizar', onclick: () => { refresh(); refreshDesktop(); } }),
+    el('button', { text: '+ Pasta', onclick: async () => { const n = await askText('Nome da nova pasta'); if (n) act(() => Bridge.bash('mkdir', join(cwd, n) + (CFG.mkdirTrailingSlash ? '/' : ''))); } }),
+    el('button', { text: '+ Arquivo', onclick: async () => { const n = await askText('Nome do novo arquivo'); if (n) act(() => Bridge.bash('write', join(cwd, n), '')); } }),
+    el('button', { text: '+ Atalho', onclick: async () => {
+      if (!sel || !/\.html?$/i.test(sel)) { st.textContent = 'Selecione um arquivo HTML para criar um atalho.'; return; }
+      const target = sel;
+      const name = await askText('Nome do atalho', target.split('/').pop().replace(/\.html?$/i, ''));
+      if (name === null) return;
+      const base = name.trim().replace(/\.shortcut$/i, '');
+      if (!base || /[\\/]/.test(base) || base === '.' || base === '..') { st.textContent = 'Nome de atalho invalido.'; return; }
+      const shortcut = join(CFG.desktopDir, base + '.shortcut');
+      if (paths.includes(shortcut) && !(await askYes('Substituir ' + shortcut + '?'))) return;
+      act(async () => { await Bridge.bash('mkdir', CFG.desktopDir); await Bridge.bash('write', shortcut, target); });
+    } }),
+    el('button', { text: 'Excluir', onclick: async () => { if (sel && await askYes('Excluir ' + sel + '?')) act(() => Bridge.bash('rm', sel)); } }));
+  body.append(bar, list, st); refresh();
+} };
+
+/* ---- Bloco de notas ---- */
+Apps.notepad = { id: 'notepad', title: 'Bloco de notas', icon: '📝', w: .5, h: .6, mount(body, win, opts) {
+  const path = el('input', { class: 'grow', placeholder: '/home/arquivo.txt', value: opts.file || '' });
+  const ta = el('textarea', { class: 'np', spellcheck: 'false' }), st = el('div', { class: 'status', text: 'Pronto.' });
+  const say = t => st.textContent = t;
+  async function open() {
+    const p = norm(path.value); path.value = p; say('Abrindo...');
+    try { ta.value = await Bridge.bash('cat', p); win.setTitle(p.split('/').pop() || 'Bloco de notas'); say('Aberto: ' + p + ' (' + ta.value.length + ' caracteres)'); } catch (e) { say('Erro: ' + e.message); }
+  }
+  async function save() {
+    if (!path.value.trim()) { const n = await askText('Salvar como', '/home/novo.txt'); if (!n) return; path.value = n; }
+    const p = norm(path.value); path.value = p; say('Salvando...');
+    try { await Bridge.bash('write', p, ta.value); if (p.startsWith(CFG.desktopDir + '/')) await refreshDesktop(); win.setTitle(p.split('/').pop()); say('Salvo em ' + p + ' as ' + new Date().toLocaleTimeString()); } catch (e) { say('Erro: ' + e.message); }
+  }
+  ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); } });
+  body.append(el('div', { class: 'tool' }, path, el('button', { text: 'Abrir', onclick: open }), el('button', { text: 'Salvar', onclick: save })), ta, st);
+  if (opts.file) open();
+} };
+
+/* ---- Terminal ---- */
+Apps.terminal = { id: 'terminal', title: 'Terminal', icon: '⌨️', w: .6, h: .62, mount(body) {
+  let cwd = '/'; const hist = []; let hi = 0; let q = Promise.resolve();
+  const out = el('div', { class: 'term' }), inp = el('input', { spellcheck: 'false', autocomplete: 'off' }), pr = el('span');
+  const setPrompt = () => pr.textContent = 'risky:' + cwd + '$';
+  const print = (t, c) => { out.append(el('div', { class: c || '', text: t })); out.scrollTop = out.scrollHeight; };
+  const tokenize = s => (s.match(/"([^"]*)"|'([^']*)'|\S+/g) || []).map(t => /^["']/.test(t) ? t.slice(1, -1) : t);
+  const FSCMD = new Set(['mkdir', 'write', 'rm', 'cat']);
+  print('risky OS terminal - digite "help"', 'd');
+
+  async function run(line) {
+    const t = tokenize(line); if (!t.length) return; const [cmd, ...a] = t;
+    try {
+      if (cmd === 'help') { print('Comandos do backend: echo, mkdir, write, rm, cat, lsfs\nOutros nomes tentam rodar /storage/modules/<nome>\nLocais: ls [pasta], cd, pwd, clear\nExemplos:\n  mkdir docs\n  write docs/a.txt "ola mundo"\n  cat docs/a.txt\n  rm docs', 'd'); }
+      else if (cmd === 'clear') out.replaceChildren();
+      else if (cmd === 'pwd') print(cwd);
+      else if (cmd === 'cd') { const d = a[0] ? resolvePath(cwd, a[0]) : '/'; cwd = d; setPrompt(); }
+      else if (cmd === 'ls') {
+        const d = a[0] ? resolvePath(cwd, a[0]) : cwd; const r = readDir(await listFS(), d);
+        print([...r.folders.map(f => f + '/'), ...r.files].join('  ') || '(vazio)');
+      } else {
+        if (a.length > 4) print('aviso: o backend aceita so 4 argumentos; o resto foi ignorado', 'd');
+        if (FSCMD.has(cmd) && a[0]) a[0] = resolvePath(cwd, a[0]) + (cmd === 'mkdir' && CFG.mkdirTrailingSlash ? '/' : '');
+        const r = await Bridge.bash(cmd, ...a);
+        if ((cmd === 'write' || cmd === 'rm') && a[0] && a[0].startsWith(CFG.desktopDir + '/')) await refreshDesktop();
+        if (cmd === 'echo') print(a[0] ?? '');
+        else if (cmd === 'cat') print(r);
+        else if (cmd === 'lsfs') print(parseList(r).join('\n') || '(vazio)');
+        else print(r === 'ok' ? 'ok' : (r || '(sem retorno)'), r === 'ok' || !r ? 'd' : '');
+      }
+    } catch (e) { print('erro: ' + e.message, 'e'); }
+  }
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const v = inp.value; inp.value = ''; print('risky:' + cwd + '$ ' + v, 'p'); if (v.trim()) { hist.push(v); hi = hist.length; } q = q.then(() => run(v)); }
+    else if (e.key === 'ArrowUp') { if (hi > 0) inp.value = hist[--hi]; e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { inp.value = hi < hist.length - 1 ? hist[++hi] : (hi = hist.length, ''); e.preventDefault(); }
+  });
+  out.addEventListener('pointerup', () => { if (!getSelection().toString()) inp.focus(); });
+  body.append(out, el('div', { class: 'tin' }, pr, inp)); setPrompt(); setTimeout(() => inp.focus(), 50);
+} };
+
+/* ---- Inspetor do backend ---- */
+Apps.inspector = { id: 'inspector', title: 'Inspetor do backend', icon: '🔍', w: .62, h: .66, mount(body, win) {
+  const log = el('div', { class: 'log' }), st = el('div', { class: 'status' });
+  const row = e => {
+    const p = e.payload, args = [p.arg1, p.arg2, p.arg3, p.arg4].map(x => x || '').filter((x, i, arr) => arr.slice(i).some(Boolean)).map(x => JSON.stringify(x.length > 60 ? x.slice(0, 60) + '…' : x)).join(' ');
+    const r = e.error ? 'ERRO: ' + e.error : (e.result === '' ? '(vazio)' : String(e.result).slice(0, 400));
+    return el('div', { class: e.error ? 'bad' : '' }, el('small', { text: e.time.toLocaleTimeString() + ' [' + e.mode + '] ' + e.ms + 'ms' }), el('br'),
+      el('b', { text: 'bash ' + p['bash-command'] + ' ' + args }), el('br'), el('span', { text: '→ ' + r }));
+  };
+  const paint = () => { log.replaceChildren(...Bridge.logs.map(row)); st.textContent = 'Modo: ' + Bridge.mode + ' - ' + Bridge.logs.length + ' chamada(s)'; };
+  const fn = d => { if (d.log || d.mode) paint(); }; Bridge.listeners.add(fn); win.onclose = () => Bridge.listeners.delete(fn);
+  body.append(el('div', { class: 'tool' }, el('button', { text: 'Testar (echo)', onclick: () => Bridge.bash('echo', 'ping').catch(() => {}) }),
+    el('button', { text: 'Listar FS (lsfs)', onclick: () => Bridge.bash('lsfs').catch(() => {}) }),
+    el('button', { text: 'Limpar', onclick: () => { Bridge.logs.length = 0; paint(); } })), log, st); paint();
+} };
+
+/* ---- Configuracoes ---- */
+const WALLS = [['linear-gradient(135deg,#1b2735,#3a2a5c 60%,#7a3b69)'], ['linear-gradient(135deg,#0f2027,#203a43,#2c5364)'], ['linear-gradient(135deg,#232526,#414345)'], ['linear-gradient(135deg,#134e5e,#71b280)'], ['linear-gradient(135deg,#42275a,#734b6d)'], ['#101216']];
+const ACCENTS = ['#4f8cff', '#9b6bff', '#ff6b9a', '#3ecf8e', '#ffb454'];
+Apps.settings = { id: 'settings', title: 'Configuracoes', icon: '⚙️', w: .5, h: .62, mount(body) {
+  const box = el('div', { class: 'set' });
+  const sw = (items, apply, cur) => { const w = el('div', { class: 'sw' }); items.forEach(v => { const i = el('i'); i.style.background = Array.isArray(v) ? v[0] : v; i.onclick = () => { apply(Array.isArray(v) ? v[0] : v); [...w.children].forEach(c => c.classList.remove('on')); i.classList.add('on'); }; w.append(i); }); return w; };
+  const status = el('div', { class: 'status', text: '' });
+  box.append(
+    el('div', {}, el('h4', { text: 'Papel de parede' }), sw(WALLS, v => $('#desktop').style.background = v)),
+    el('div', {}, el('h4', { text: 'Cor de destaque' }), sw(ACCENTS, v => document.documentElement.style.setProperty('--accent', v))),
+    el('div', {}, el('h4', { text: 'Tema' }), el('div', { class: 'tool' },
+      el('button', { text: 'Escuro', onclick: () => document.documentElement.dataset.theme = 'dark' }),
+      el('button', { text: 'Claro', onclick: () => document.documentElement.dataset.theme = 'light' }))),
+    el('div', {}, el('h4', { text: 'Backend' }), el('div', { text: 'Modo atual: ' + Bridge.mode }),
+      el('div', { class: 'tool' }, el('button', { text: 'Testar conexao', onclick: async () => { try { const t = performance.now(); await Bridge.bash('echo', 'teste'); status.textContent = 'OK (' + Math.round(performance.now() - t) + 'ms) - modo ' + Bridge.mode; } catch (e) { status.textContent = 'Falhou: ' + e.message; } } }), el('button', { text: 'Reiniciar o risky OS', onclick: () => location.reload() })), status));
+  body.append(box);
+} };
+
+/* ==================== DESKTOP / TASKBAR / MENU ==================== */
+const order = ['files', 'notepad', 'terminal', 'inspector', 'settings'];
+const iconsBox = $('#icons'), menu = $('#menu');
+order.forEach(id => {
+  const a = Apps[id]; const n = el('div', { class: 'dicon' }, el('div', { class: 'g', text: a.icon }), el('div', { class: 't', text: a.title }));
+  n.addEventListener('click', () => { [...iconsBox.children].forEach(c => c.classList.remove('sel')); n.classList.add('sel'); });
+  n.addEventListener('dblclick', () => WM.open(a)); iconsBox.append(n);
+  menu.append(el('div', { text: a.icon + '  ' + a.title, onclick: () => { menu.classList.remove('show'); WM.open(a); } }));
+});
+let desktopRefresh = 0;
+async function refreshDesktop() {
+  const generation = ++desktopRefresh;
+  const prefix = CFG.desktopDir + '/';
+  const paths = (await listFS()).filter(p => p.startsWith(prefix) && !p.slice(prefix.length).includes('/') && /\.shortcut$/i.test(p)).sort();
+  if (generation !== desktopRefresh) return;
+  iconsBox.querySelectorAll('.dshortcut').forEach(n => n.remove());
+  paths.forEach(path => {
+    const name = path.slice(prefix.length).replace(/\.shortcut$/i, '');
+    const n = el('div', { class: 'dicon dshortcut', title: path }, el('div', { class: 'g', text: '🌐' }), el('div', { class: 't', text: name }));
+    n.addEventListener('click', () => { [...iconsBox.children].forEach(c => c.classList.remove('sel')); n.classList.add('sel'); });
+    n.addEventListener('dblclick', () => openPath(path).catch(showError));
+    iconsBox.append(n);
+  });
+}
+Bridge.listeners.add(d => { if (d.mode) refreshDesktop().catch(() => {}); });
+if (Bridge.mode !== 'connecting') refreshDesktop().catch(() => {});
+menu.append(el('hr'), el('div', { text: '🔄  Reiniciar', onclick: () => location.reload() }));
+$('#start').addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('show'); });
+document.addEventListener('pointerdown', e => { if (!menu.contains(e.target) && e.target.id !== 'start') menu.classList.remove('show'); iconsBox.contains(e.target) || [...iconsBox.children].forEach(c => c.classList.remove('sel')); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') menu.classList.remove('show'); });
+document.addEventListener('contextmenu', e => { if (!/INPUT|TEXTAREA/.test(e.target.tagName)) e.preventDefault(); });
+
+function clock() { const d = new Date(); $('#clock').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+clock(); setInterval(clock, 10000);
+function paintBackend() {
+  const m = Bridge.mode, c = { turbowarp: '#3ecf8e', mock: '#d9a441', connecting: '#8b93a5' }[m];
+  $('#dot').style.background = c; $('#bk').textContent = { turbowarp: 'backend', mock: 'demo', connecting: 'conectando' }[m];
+  $('#tray').title = { turbowarp: 'Conectado ao backend do TurboWarp', mock: 'Modo demo: sem backend (FS simulado)', connecting: 'Procurando o backend...' }[m];
+}
+paintBackend(); Bridge.listeners.add(d => { if (d.mode) paintBackend(); });
+
+WM.open(Apps.files, { dir: '/home' });
+</script>
+</body>
+</html>
