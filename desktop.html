@@ -64,6 +64,9 @@ textarea.np{flex:1;resize:none;border:0;border-radius:0;font-family:ui-monospace
 .set{padding:.8em;display:flex;flex-direction:column;gap:.9em;overflow:auto}
 .set h4{margin-bottom:.3em;font-size:.95em}.sw{display:flex;gap:.4em;flex-wrap:wrap}
 .sw i{width:2.4em;height:1.6em;border-radius:.3em;border:2px solid transparent;cursor:pointer;display:block}.sw i.on{border-color:#fff;outline:2px solid var(--accent)}
+#toast{position:fixed;left:50%;bottom:3.4em;transform:translateX(-50%);max-width:82%;padding:.5em .9em;border-radius:.5em;background:var(--bar);color:var(--win-fg);border:1px solid var(--line);box-shadow:0 .4em 1.2em #0006;display:none;z-index:100001;user-select:text;word-break:break-word}
+#toast.show{display:block}#toast.err{border-color:var(--err);color:var(--err)}#toast.ok{border-color:var(--ok)}
+.assoc .tool{background:transparent;border:0;padding:.15em 0}
 #modal{position:fixed;inset:0;background:#0008;display:none;align-items:center;justify-content:center;z-index:100000}
 #modal.show{display:flex}
 #modal .box{background:var(--win-bg);border:1px solid var(--line);border-radius:.6em;padding:1em;min-width:18em;max-width:90%;display:flex;flex-direction:column;gap:.7em}
@@ -78,71 +81,85 @@ textarea.np{flex:1;resize:none;border:0;border-radius:0;font-family:ui-monospace
   <div id="tasks"></div>
   <div id="tray"><span><i id="dot"></i><span id="bk">...</span></span><span id="clock"></span></div>
 </div>
+<div id="toast"></div>
 <div id="modal"><div class="box" id="mbox"></div></div>
 
 <script>
 'use strict';
 /* ==================== CONFIG ==================== */
 const CFG = {
-  mkdirTrailingSlash: false,   // mude para true se o seu rxFS2 espera "/pasta/" ao criar pastas
+  mkdirTrailingSlash: true,    // pastas sao entradas terminadas em "/" (ex.: "/home/"); mude para false se nao funcionar
   callTimeoutMs: 12000,
-  rootDir: '/',
-  desktopDir: '/home/desktop'
+  kernelReplyMs: 8000,         // tempo maximo esperando o kernel responder OK / file error
+  kernelIdleMs: 120000,        // encerra a sessao se o kernel ficar esse tempo sem mandar nada
+  assocPath: '/system/associations.json',
+  rootDir: '/'
 };
 
 /* ==================== BRIDGE (backend) ==================== */
-/* Protocolo com o TurboWarp (ponte JS rodando na pagina principal):
-   frontend -> pagina : {__risky:1, type:'ping'}                       pagina -> frontend : {type:'pong'}
-   frontend -> pagina : {__risky:1, type:'call', id, payload:{...}}    pagina -> frontend : {type:'result', id, result, error}
-   payload = {command:'bash', 'bash-command':'mkdir', arg1:'/x', arg2:'', arg3:'', arg4:''}  */
+/* Protocolo com a pagina do TurboWarp (ponte JS = bridge.js):
+   1) o frontend manda UMA mensagem {__risky:1, op:'hello'} levando uma MessagePort;
+   2) toda a conversa seguinte (chamadas e respostas) vai por essa porta, entao NAO passa pela extensao
+      iframe e nao sobrescreve "iframe message" (que fica livre para o kernel: abrir arquivos, etc.).
+   chamada: {__risky:1, op:'call', id, payload:{command:'bash','bash-command':'mkdir',arg1..arg4}}
+   resposta: {__risky:1, op:'result', id, result, error}                                          */
 const Bridge = (() => {
   const inFrame = window.parent !== window;
   const listeners = new Set(), logs = [];
   let mode = inFrame ? 'connecting' : 'mock';
-  let seq = 0; const pending = new Map();
+  let seq = 0, port = null; const pending = new Map(), attempts = [];
   const setMode = m => { mode = m; listeners.forEach(f => f({ mode })); };
 
-  window.addEventListener('message', e => {
-    const d = e.data; if (e.source !== parent || !d || d.__risky !== 1) return;
-    if (d.type === 'pong') { if (mode !== 'turbowarp') setMode('turbowarp'); }
-    else if (d.type === 'result') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d); } }
-  });
+  function onPort(ch, ev) {
+    const d = ev.data; if (!d || d.__risky !== 1) return;
+    if (d.op === 'pong') {
+      if (!port) { port = ch.port1; attempts.forEach(a => { if (a !== ch) { try { a.port1.close(); } catch (e) {} } }); attempts.length = 0; setMode('turbowarp'); }
+    } else if (d.op === 'result') { const p = pending.get(d.id); if (p) { pending.delete(d.id); p(d); } }
+  }
+  function hello() {
+    while (attempts.length > 3) { try { attempts.shift().port1.close(); } catch (e) {} }
+    const ch = new MessageChannel(); attempts.push(ch);
+    ch.port1.onmessage = ev => onPort(ch, ev);
+    parent.postMessage({ __risky: 1, op: 'hello' }, '*', [ch.port2]);
+  }
   if (inFrame) {
     let tries = 0;
-    (function ping(){
-      if (mode === 'turbowarp') return;
-      parent.postMessage({ __risky: 1, type: 'ping' }, '*');
-      if (++tries === 8 && mode === 'connecting') setMode('mock');   // ~5s sem resposta => demo
-      setTimeout(ping, 650);
+    (function loop() {
+      if (port) return;
+      hello(); tries++;
+      if (tries === 8 && mode === 'connecting') setMode('mock');     // ~5s sem resposta => demo
+      setTimeout(loop, tries < 8 ? 650 : 4000);                      // depois continua tentando devagar
     })();
   }
 
   /* ---- backend de mentira (so para testar fora do TurboWarp) ---- */
   const mockFS = new Map([
-    ['/home/', ''], ['/home/desktop/', ''], ['/home/bem-vindo.txt', 'Ola! Este e o modo demo do risky OS.\nAbra dentro do TurboWarp para usar o backend real.'],
+    ['/home/', ''], ['/home/bem-vindo.txt', 'Ola! Este e o modo demo do risky OS.\nAbra dentro do TurboWarp para usar o backend real.'],
+    ['/home/exemplo.py', 'print("oi")'], ['/home/notas.txt', 'minhas notas'],
     ['/system/', ''], ['/storage/', ''], ['/storage/modules/', '']
   ]);
-  function mock(cmd, a1, a2) {
+  function mock(cmd, a1, a2) {   // imita o kernel: write cria+grava, rm e recursivo, cat inexistente -> "undefined"
     switch (cmd) {
-      case 'echo': console.log('[mock log]', a1); return 'ok';
-      case 'mkdir': { const p = a1.replace(/\/+$/, ''); mockFS.set(p + '/', ''); return 'ok'; }
+      case 'echo': console.log('[mock log]', a1); return a1;
+      case 'mkdir': if (!mockFS.has(a1)) mockFS.set(a1, ''); return 'ok';
       case 'write': mockFS.set(a1, a2 || ''); return 'ok';
-      case 'rm': { const p = a1.replace(/\/+$/, ''); for (const k of [...mockFS.keys()]) if (k === p || k === p + '/' || k.startsWith(p + '/')) mockFS.delete(k); return 'ok'; }
-      case 'cat': return mockFS.has(a1) ? mockFS.get(a1) : '';
+      case 'rm': { const p = a1.replace(/\/+$/, ''); for (const k of [...mockFS.keys()]) if (k === p || k.startsWith(p + '/')) mockFS.delete(k); return 'ok'; }
+      case 'cat': return mockFS.has(a1) ? mockFS.get(a1) : 'undefined';
       case 'lsfs': return JSON.stringify([...mockFS.keys()]);
-      default: return '';
+      default: { const code = mockFS.get('/storage/modules/' + cmd); if (code == null) return ''; try { return String(new Function('arg1', 'arg2', code)(a1, a2)); } catch (e) { return 'Erro: ' + e.message; } }
     }
   }
 
   function rawCall(payload) {
-    if (mode === 'mock') {
+    if (mode === 'mock' || !port) {
+      if (mode !== 'mock') return Promise.resolve({ error: 'sem conexao com o backend (ainda conectando)' });
       return new Promise(r => setTimeout(() => r({ result: mock(payload['bash-command'], payload.arg1 || '', payload.arg2 || '') }), 40));
     }
     return new Promise(resolve => {
       const id = ++seq; let done = false;
       const t = setTimeout(() => { if (!done) { pending.delete(id); resolve({ error: 'timeout (' + CFG.callTimeoutMs + 'ms) - o backend nao respondeu' }); } }, CFG.callTimeoutMs);
       pending.set(id, d => { done = true; clearTimeout(t); resolve(d); });
-      parent.postMessage({ __risky: 1, type: 'call', id, payload }, '*');
+      port.postMessage({ __risky: 1, op: 'call', id, payload });
     });
   }
 
@@ -155,10 +172,12 @@ const Bridge = (() => {
     logs.unshift(entry); if (logs.length > 200) logs.pop();
     listeners.forEach(f => f({ log: entry }));
     if (d.error) throw new Error(d.error);
-    return d.result == null ? '' : String(d.result);
+    let out = d.result == null ? '' : String(d.result);
+    if (cmd === 'cat' && out === 'undefined') out = '';        // rxFS2 devolve "undefined" para arquivo inexistente
+    return out;
   }
 
-  return { bash, logs, listeners, get mode() { return mode; } };
+  return { bash, logs, listeners, mockHas: p => mockFS.has(p), get mode() { return mode; } };
 })();
 
 /* ==================== FS helpers ==================== */
@@ -185,8 +204,7 @@ function readDir(paths, dir) {
     p = String(p); if (!p.startsWith('/')) p = '/' + p;
     if (!p.startsWith(pre) || p === pre) continue;
     const rest = p.slice(pre.length); const i = rest.indexOf('/');
-    if (i === -1 && p === CFG.desktopDir) folders.add(rest);
-    else if (i === -1) files.add(rest);
+    if (i === -1) files.add(rest);
     else folders.add(rest.slice(0, i));
   }
   files.forEach(f => { if (folders.has(f)) files.delete(f); });
@@ -210,6 +228,8 @@ function modal(build) {
     build(box, close);
   });
 }
+let toastT = null;
+function toast(msg, kind) { const t = $('#toast'); t.textContent = msg; t.className = 'show ' + (kind || ''); clearTimeout(toastT); toastT = setTimeout(() => t.className = '', 6000); }
 const askText = (title, def = '') => modal((box, close) => {
   const inp = el('input', { value: def, class: 'grow' });
   box.append(el('b', { text: title }), inp, el('div', { class: 'row' },
@@ -281,135 +301,6 @@ const WM = (() => {
 
 /* ==================== APPS ==================== */
 const Apps = {};
-let installingPackage = false;
-
-Apps.html = { id: 'html', title: 'HTML', icon: '🌐', w: .7, h: .7, mount(body, win, opts) {
-  const frame = el('iframe', { sandbox: 'allow-scripts allow-forms allow-modals', title: opts.file });
-  Object.assign(frame.style, { width: '100%', height: '100%', border: '0', background: '#fff' });
-  const onInstall = async e => {
-    const d = e.data;
-    if (e.source !== frame.contentWindow || !d || d.__riskyInstaller !== 1 || typeof d.id !== 'string' || d.id.length > 100) return;
-    if (d.type === 'hello') return e.source.postMessage({ __riskyInstaller: 1, type: 'ready', id: d.id }, '*');
-    if (d.type !== 'install') return;
-    const reply = (status, message) => e.source.postMessage({ __riskyInstaller: 1, type: 'result', id: d.id, status, message }, '*');
-    if (installingPackage || $('#modal').classList.contains('show')) return reply('error', 'Outra confirmacao esta em andamento.');
-    installingPackage = true;
-    try {
-      const validPath = value => typeof value === 'string' && value.length <= 160 && value.split('/').every(p => /^[a-zA-Z0-9._-]+$/.test(p) && p !== '.' && p !== '..');
-      if (typeof d.name !== 'string' || !/^[a-zA-Z0-9_-]{1,48}$/.test(d.name) || !validPath(d.entry) || !/\.html?$/i.test(d.entry) || !Array.isArray(d.files) || d.files.length < 1 || d.files.length > 30) throw new Error('Pacote de instalacao invalido.');
-      const names = new Set(); let size = 0;
-      for (const item of d.files) {
-        if (!Array.isArray(item) || item.length !== 2 || !validPath(item[0]) || typeof item[1] !== 'string' || names.has(item[0])) throw new Error('Arquivo invalido no pacote.');
-        names.add(item[0]); size += item[1].length;
-      }
-      if (!names.has(d.entry) || size > 1500000) throw new Error('Pacote de instalacao invalido ou muito grande.');
-      const root = '/program files/' + d.name, shortcut = CFG.desktopDir + '/' + d.name + '.shortcut';
-      const existing = new Set(await listFS());
-      const replacements = d.files.map(item => root + '/' + item[0]).concat(shortcut).filter(path => existing.has(path));
-      const notice = 'O programa ' + opts.file + ' deseja instalar ' + d.name + ' em ' + root + ' e criar o atalho ' + shortcut + '. Arquivos: ' + [...names].join(', ') + '.' + (replacements.length ? ' Os seguintes arquivos serao substituidos: ' + replacements.join(', ') + '.' : '');
-      if (!(await askYes(notice))) return reply('cancelled', 'Instalacao cancelada.');
-      if (!frame.isConnected) return;
-      const dirs = new Set(['/program files', root, CFG.desktopDir]);
-      for (const [name] of d.files) {
-        let dir = root;
-        for (const part of name.split('/').slice(0, -1)) { dir += '/' + part; dirs.add(dir); }
-      }
-      for (const dir of dirs) await Bridge.bash('mkdir', dir + (CFG.mkdirTrailingSlash ? '/' : ''));
-      for (const [name, content] of d.files) {
-        const path = root + '/' + name;
-        await Bridge.bash('write', path, content);
-        if (await Bridge.bash('cat', path) !== content) throw new Error('Nao foi possivel verificar ' + path + '.');
-      }
-      await Bridge.bash('write', shortcut, root + '/' + d.entry);
-      if (await Bridge.bash('cat', shortcut) !== root + '/' + d.entry) throw new Error('Nao foi possivel verificar o atalho.');
-      await refreshDesktop();
-      reply('ok', 'Instalacao concluida. Abra o atalho no desktop.');
-    } catch (error) { reply('error', error.message); }
-    finally { installingPackage = false; }
-  };
-  window.addEventListener('message', onInstall);
-  win.onclose = () => window.removeEventListener('message', onInstall);
-  frame.srcdoc = opts.html;
-  body.append(frame);
-  if (opts.warnings.length) body.append(el('div', { class: 'status', text: opts.warnings.join(' | ') }));
-  win.setTitle(opts.file.split('/').pop());
-} };
-
-async function prepareHTML(html, file, paths) {
-  const available = new Set(paths), warnings = new Set();
-  const localPath = (value, base) => {
-    value = value.trim();
-    if (!value || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(value)) return null;
-    let path = value.split(/[?#]/, 1)[0];
-    try { path = decodeURIComponent(path); } catch (e) {}
-    const parts = (path.startsWith('/') ? path : parentOf(base) + '/' + path).split('/'), result = [];
-    for (const part of parts) {
-      if (part === '..') result.pop();
-      else if (part && part !== '.') result.push(part);
-    }
-    return '/' + result.join('/');
-  };
-  async function resourceURL(value, base, kind, stack = []) {
-    const path = localPath(value, base);
-    if (path === null) return value;
-    if (!available.has(path)) { warnings.add('Arquivo nao encontrado: ' + path); return 'data:,'; }
-    if (stack.includes(path)) { warnings.add('Referencia circular: ' + path); return 'data:,'; }
-    let content = await Bridge.bash('cat', path);
-    if (kind === 'asset' && /^data:/i.test(content.trim())) return content.trim();
-    if (kind === 'asset' && /\.css$/i.test(path)) kind = 'css';
-    if (kind === 'asset' && !/\.svg$/i.test(path)) {
-      warnings.add('Formato de recurso nao suportado: ' + path);
-      return 'data:,';
-    }
-    if (kind === 'css') content = await rewriteCSS(content, path, [...stack, path]);
-    const type = kind === 'css' ? 'text/css' : kind === 'script' ? 'text/javascript' : 'image/svg+xml';
-    return 'data:' + type + ';charset=utf-8,' + encodeURIComponent(content);
-  }
-  async function rewriteCSS(css, base, stack = []) {
-    const pattern = /(?:@import\s+)?url\(\s*(?:(['"])(.*?)\1|([^'")]*))\s*\)|@import\s+(['"])(.*?)\4/gi;
-    let out = '', last = 0;
-    for (const match of css.matchAll(pattern)) {
-      const value = match[2] ?? match[3] ?? match[5];
-      const imported = /^@import/i.test(match[0]);
-      const url = await resourceURL(value, base, imported ? 'css' : 'asset', stack);
-      out += css.slice(last, match.index) + (url === value ? match[0] : (imported ? '@import ' : '') + 'url("' + url + '")');
-      last = match.index + match[0].length;
-    }
-    return out + css.slice(last);
-  }
-  const doc = new DOMParser().parseFromString(html, 'text/html');
-  for (const node of doc.querySelectorAll('script[src], link[rel~="stylesheet" i][href], img[src]')) {
-    const attr = node.localName === 'link' ? 'href' : 'src';
-    const kind = node.localName === 'link' ? 'css' : node.localName === 'script' ? 'script' : 'asset';
-    node.setAttribute(attr, await resourceURL(node.getAttribute(attr), file, kind));
-  }
-  for (const node of doc.querySelectorAll('style')) node.textContent = await rewriteCSS(node.textContent, file);
-  for (const node of doc.querySelectorAll('[style]')) node.setAttribute('style', await rewriteCSS(node.getAttribute('style'), file));
-  return { html: '<!DOCTYPE html>\n' + doc.documentElement.outerHTML, warnings: [...warnings] };
-}
-
-async function openPath(file) {
-  file = norm(file);
-  if (/\.shortcut$/i.test(file)) {
-    const target = String(await Bridge.bash('cat', file)).trim();
-    if (!target.startsWith('/') || !/\.html?$/i.test(target)) throw new Error('O atalho deve conter o caminho absoluto de um arquivo HTML.');
-    file = norm(target);
-  }
-  if (/\.html?$/i.test(file)) {
-    const paths = await listFS();
-    if (!paths.includes(file)) throw new Error('Arquivo nao encontrado: ' + file);
-    const html = await Bridge.bash('cat', file);
-    if (!html.trim()) throw new Error('Arquivo HTML vazio: ' + file);
-    WM.open(Apps.html, { file, ...await prepareHTML(html, file, paths) });
-  } else {
-    WM.open(Apps.notepad, { file });
-  }
-}
-
-function showError(error) {
-  return modal((box, close) => box.append(el('div', { text: 'Erro: ' + error.message }),
-    el('div', { class: 'row' }, el('button', { class: 'btn', text: 'OK', onclick: () => close() }))));
-}
 
 /* ---- Arquivos ---- */
 Apps.files = { id: 'files', title: 'Arquivos', icon: '📁', w: .6, h: .66, mount(body, win, opts) {
@@ -427,33 +318,23 @@ Apps.files = { id: 'files', title: 'Arquivos', icon: '📁', w: .6, h: .66, moun
       const full = join(cwd, name);
       const n = el('div', { class: 'fi' + (sel === full ? ' sel' : '') }, el('div', { class: 'g', text: isDir ? '📁' : '📄' }), el('div', { class: 't', text: name }));
       n.addEventListener('click', () => { sel = full; [...list.children].forEach(c => c.classList.remove('sel')); n.classList.add('sel'); });
-      n.addEventListener('dblclick', () => { if (isDir) go(full); else openPath(full).catch(showError); });
-      n._isDir = isDir; n._full = full; list.append(n);
+      n.addEventListener('dblclick', () => isDir ? go(full) : openFile(full));
+      list.append(n);
     };
     folders.forEach(f => mk(f, true)); files.forEach(f => mk(f, false));
     if (!folders.length && !files.length) list.append(el('div', { class: 'empty', text: 'Pasta vazia.' }));
     st.textContent = folders.length + ' pasta(s), ' + files.length + ' arquivo(s) - ' + paths.length + ' item(ns) no total';
   }
-  const act = async fn => { try { await fn(); await refreshDesktop(); } catch (e) { st.textContent = 'Erro: ' + e.message; return; } refresh(); };
+  const act = async fn => { try { await fn(); } catch (e) { st.textContent = 'Erro: ' + e.message; return; } refresh(); };
   const bar = el('div', { class: 'tool' },
     el('button', { text: '↑', title: 'Subir', onclick: () => go(parentOf(cwd)) }), path,
-    el('button', { text: '⟳', title: 'Atualizar', onclick: () => { refresh(); refreshDesktop(); } }),
+    el('button', { text: '⟳', title: 'Atualizar', onclick: refresh }),
     el('button', { text: '+ Pasta', onclick: async () => { const n = await askText('Nome da nova pasta'); if (n) act(() => Bridge.bash('mkdir', join(cwd, n) + (CFG.mkdirTrailingSlash ? '/' : ''))); } }),
     el('button', { text: '+ Arquivo', onclick: async () => { const n = await askText('Nome do novo arquivo'); if (n) act(() => Bridge.bash('write', join(cwd, n), '')); } }),
-    el('button', { text: '+ Atalho', onclick: async () => {
-      if (!sel || !/\.html?$/i.test(sel)) { st.textContent = 'Selecione um arquivo HTML para criar um atalho.'; return; }
-      const target = sel;
-      const name = await askText('Nome do atalho', target.split('/').pop().replace(/\.html?$/i, ''));
-      if (name === null) return;
-      const base = name.trim().replace(/\.shortcut$/i, '');
-      if (!base || /[\\/]/.test(base) || base === '.' || base === '..') { st.textContent = 'Nome de atalho invalido.'; return; }
-      const shortcut = join(CFG.desktopDir, base + '.shortcut');
-      if (paths.includes(shortcut) && !(await askYes('Substituir ' + shortcut + '?'))) return;
-      act(async () => { await Bridge.bash('mkdir', CFG.desktopDir); await Bridge.bash('write', shortcut, target); });
-    } }),
     el('button', { text: 'Excluir', onclick: async () => { if (sel && await askYes('Excluir ' + sel + '?')) act(() => Bridge.bash('rm', sel)); } }));
   body.append(bar, list, st); refresh();
 } };
+
 
 /* ---- Bloco de notas ---- */
 Apps.notepad = { id: 'notepad', title: 'Bloco de notas', icon: '📝', w: .5, h: .6, mount(body, win, opts) {
@@ -467,7 +348,7 @@ Apps.notepad = { id: 'notepad', title: 'Bloco de notas', icon: '📝', w: .5, h:
   async function save() {
     if (!path.value.trim()) { const n = await askText('Salvar como', '/home/novo.txt'); if (!n) return; path.value = n; }
     const p = norm(path.value); path.value = p; say('Salvando...');
-    try { await Bridge.bash('write', p, ta.value); if (p.startsWith(CFG.desktopDir + '/')) await refreshDesktop(); win.setTitle(p.split('/').pop()); say('Salvo em ' + p + ' as ' + new Date().toLocaleTimeString()); } catch (e) { say('Erro: ' + e.message); }
+    try { await Bridge.bash('write', p, ta.value); win.setTitle(p.split('/').pop()); say('Salvo em ' + p + ' as ' + new Date().toLocaleTimeString()); } catch (e) { say('Erro: ' + e.message); }
   }
   ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); } });
   body.append(el('div', { class: 'tool' }, path, el('button', { text: 'Abrir', onclick: open }), el('button', { text: 'Salvar', onclick: save })), ta, st);
@@ -475,45 +356,59 @@ Apps.notepad = { id: 'notepad', title: 'Bloco de notas', icon: '📝', w: .5, h:
 } };
 
 /* ---- Terminal ---- */
-Apps.terminal = { id: 'terminal', title: 'Terminal', icon: '⌨️', w: .6, h: .62, mount(body) {
-  let cwd = '/'; const hist = []; let hi = 0; let q = Promise.resolve();
+Apps.terminal = { id: 'terminal', title: 'Terminal', icon: '⌨️', w: .6, h: .62, mount(body, win) {
+  let cwd = '/', hi = 0, q = Promise.resolve(), locked = false; const hist = [];
   const out = el('div', { class: 'term' }), inp = el('input', { spellcheck: 'false', autocomplete: 'off' }), pr = el('span');
   const setPrompt = () => pr.textContent = 'risky:' + cwd + '$';
   const print = (t, c) => { out.append(el('div', { class: c || '', text: t })); out.scrollTop = out.scrollHeight; };
-  const tokenize = s => (s.match(/"([^"]*)"|'([^']*)'|\S+/g) || []).map(t => /^["']/.test(t) ? t.slice(1, -1) : t);
+  const tokenize = s => (s.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+/g) || []).map(t => /^["']/.test(t) ? t.slice(1, -1).replace(/\\(["'\\])/g, '$1') : t);   // aceita \" dentro de aspas
   const FSCMD = new Set(['mkdir', 'write', 'rm', 'cat']);
   print('risky OS terminal - digite "help"', 'd');
 
   async function run(line) {
-    const t = tokenize(line); if (!t.length) return; const [cmd, ...a] = t;
+    const t = tokenize(line); if (!t.length) return; const cmd = t[0]; let a = t.slice(1);
     try {
-      if (cmd === 'help') { print('Comandos do backend: echo, mkdir, write, rm, cat, lsfs\nOutros nomes tentam rodar /storage/modules/<nome>\nLocais: ls [pasta], cd, pwd, clear\nExemplos:\n  mkdir docs\n  write docs/a.txt "ola mundo"\n  cat docs/a.txt\n  rm docs', 'd'); }
+      if (cmd === 'help') { print('Comandos do backend: echo, mkdir, write, rm, cat, lsfs\nOutros nomes tentam rodar /storage/modules/<nome> (arg1, arg2)\nLocais: ls [pasta], cd, pwd, clear, open <arquivo>\n"open" usa as associacoes de /system/associations.json\nExemplos:\n  mkdir docs\n  write docs/a.txt "ola mundo"\n  cat docs/a.txt\n  open docs/a.txt\n  rm docs', 'd'); }
       else if (cmd === 'clear') out.replaceChildren();
       else if (cmd === 'pwd') print(cwd);
-      else if (cmd === 'cd') { const d = a[0] ? resolvePath(cwd, a[0]) : '/'; cwd = d; setPrompt(); }
+      else if (cmd === 'cd') { cwd = a[0] ? resolvePath(cwd, a[0]) : '/'; setPrompt(); }
       else if (cmd === 'ls') {
         const d = a[0] ? resolvePath(cwd, a[0]) : cwd; const r = readDir(await listFS(), d);
         print([...r.folders.map(f => f + '/'), ...r.files].join('  ') || '(vazio)');
-      } else {
+      } else if (cmd === 'echo') { const txt = a.join(' '); await Bridge.bash('echo', txt); print(txt); }
+      else if (cmd === 'open') { if (!a[0]) print('uso: open <arquivo>', 'e'); else await openFile(resolvePath(cwd, a[0])); }
+      else {
+        if (cmd === 'write' && a.length > 2) a = [a[0], a.slice(1).join(' ')];
         if (a.length > 4) print('aviso: o backend aceita so 4 argumentos; o resto foi ignorado', 'd');
         if (FSCMD.has(cmd) && a[0]) a[0] = resolvePath(cwd, a[0]) + (cmd === 'mkdir' && CFG.mkdirTrailingSlash ? '/' : '');
         const r = await Bridge.bash(cmd, ...a);
-        if ((cmd === 'write' || cmd === 'rm') && a[0] && a[0].startsWith(CFG.desktopDir + '/')) await refreshDesktop();
-        if (cmd === 'echo') print(a[0] ?? '');
-        else if (cmd === 'cat') print(r);
+        if (cmd === 'cat') print(r);
         else if (cmd === 'lsfs') print(parseList(r).join('\n') || '(vazio)');
         else print(r === 'ok' ? 'ok' : (r || '(sem retorno)'), r === 'ok' || !r ? 'd' : '');
       }
     } catch (e) { print('erro: ' + e.message, 'e'); }
   }
+  const exec = line => { print('risky:' + cwd + '$ ' + line, 'p'); return run(line); };
+
   inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { const v = inp.value; inp.value = ''; print('risky:' + cwd + '$ ' + v, 'p'); if (v.trim()) { hist.push(v); hi = hist.length; } q = q.then(() => run(v)); }
+    if (locked) return;
+    if (e.key === 'Enter') { const v = inp.value; inp.value = ''; if (v.trim()) { hist.push(v); hi = hist.length; } q = q.then(() => exec(v)); }
     else if (e.key === 'ArrowUp') { if (hi > 0) inp.value = hist[--hi]; e.preventDefault(); }
     else if (e.key === 'ArrowDown') { inp.value = hi < hist.length - 1 ? hist[++hi] : (hi = hist.length, ''); e.preventDefault(); }
   });
   out.addEventListener('pointerup', () => { if (!getSelection().toString()) inp.focus(); });
+
+  /* sessao do kernel: o kernel manda comandos (um por mensagem) e este terminal os executa em ordem */
+  win.api = {
+    begin(label) { locked = true; inp.disabled = true; inp.placeholder = 'executando ' + label + '...'; win.setTitle('Terminal - ' + label); print('[kernel] iniciando ' + label, 'd'); },
+    enqueue(line) { q = q.then(() => exec(line)); },
+    end(msg) { q = q.then(() => { print(msg || '[programa finalizado]', 'd'); locked = false; inp.disabled = false; inp.placeholder = ''; win.setTitle('Terminal'); inp.focus(); }); }
+  };
+  win.onclose = () => { if (locked) Kernel.end(); };
+
   body.append(out, el('div', { class: 'tin' }, pr, inp)); setPrompt(); setTimeout(() => inp.focus(), 50);
 } };
+
 
 /* ---- Inspetor do backend ---- */
 Apps.inspector = { id: 'inspector', title: 'Inspetor do backend', icon: '🔍', w: .62, h: .66, mount(body, win) {
@@ -534,20 +429,130 @@ Apps.inspector = { id: 'inspector', title: 'Inspetor do backend', icon: '🔍', 
 /* ---- Configuracoes ---- */
 const WALLS = [['linear-gradient(135deg,#1b2735,#3a2a5c 60%,#7a3b69)'], ['linear-gradient(135deg,#0f2027,#203a43,#2c5364)'], ['linear-gradient(135deg,#232526,#414345)'], ['linear-gradient(135deg,#134e5e,#71b280)'], ['linear-gradient(135deg,#42275a,#734b6d)'], ['#101216']];
 const ACCENTS = ['#4f8cff', '#9b6bff', '#ff6b9a', '#3ecf8e', '#ffb454'];
-Apps.settings = { id: 'settings', title: 'Configuracoes', icon: '⚙️', w: .5, h: .62, mount(body) {
+Apps.settings = { id: 'settings', title: 'Configuracoes', icon: '⚙️', w: .56, h: .72, mount(body) {
   const box = el('div', { class: 'set' });
-  const sw = (items, apply, cur) => { const w = el('div', { class: 'sw' }); items.forEach(v => { const i = el('i'); i.style.background = Array.isArray(v) ? v[0] : v; i.onclick = () => { apply(Array.isArray(v) ? v[0] : v); [...w.children].forEach(c => c.classList.remove('on')); i.classList.add('on'); }; w.append(i); }); return w; };
+  const sw = (items, apply) => { const w = el('div', { class: 'sw' }); items.forEach(v => { const i = el('i'); i.style.background = Array.isArray(v) ? v[0] : v; i.onclick = () => { apply(Array.isArray(v) ? v[0] : v); [...w.children].forEach(c => c.classList.remove('on')); i.classList.add('on'); }; w.append(i); }); return w; };
   const status = el('div', { class: 'status', text: '' });
+
+  /* associacoes de arquivo (extensao -> programa) */
+  const rows = el('div', { class: 'assoc' }), ast = el('div', { class: 'status', text: 'Arquivo: ' + CFG.assocPath });
+  const addRow = (ext = '', h = '') => {
+    const e = el('input', { value: ext, placeholder: 'ext', style: 'width:5em' });
+    const hh = el('input', { value: h, placeholder: 'app:notepad  ou  nome-do-modulo', class: 'grow' });
+    const r = el('div', { class: 'tool' }, e, el('span', { text: '→' }), hh, el('button', { text: '✕', onclick: () => r.remove() }));
+    r._get = () => [e.value, hh.value]; rows.append(r);
+  };
+  const fill = a => { rows.replaceChildren(); Object.entries(a).forEach(([k, v]) => addRow(k, v)); };
+  async function saveAssoc() {
+    const o = {}; [...rows.children].forEach(r => { let [k, v] = r._get(); k = k.trim().toLowerCase().replace(/^\./, ''); v = v.trim(); if (k && v) o[k] = v; });
+    try { await Bridge.bash('write', CFG.assocPath, JSON.stringify(o, null, 2)); ast.textContent = 'Salvo em ' + CFG.assocPath + ' (' + Object.keys(o).length + ' extensoes)'; }
+    catch (e) { ast.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+  loadAssoc().then(fill);
+
   box.append(
     el('div', {}, el('h4', { text: 'Papel de parede' }), sw(WALLS, v => $('#desktop').style.background = v)),
     el('div', {}, el('h4', { text: 'Cor de destaque' }), sw(ACCENTS, v => document.documentElement.style.setProperty('--accent', v))),
     el('div', {}, el('h4', { text: 'Tema' }), el('div', { class: 'tool' },
       el('button', { text: 'Escuro', onclick: () => document.documentElement.dataset.theme = 'dark' }),
       el('button', { text: 'Claro', onclick: () => document.documentElement.dataset.theme = 'light' }))),
+    el('div', {}, el('h4', { text: 'Abrir arquivos com...' }),
+      el('div', { class: 'status', text: 'extensao → "app:notepad" (app do desktop) ou nome de um modulo em /storage/modules (recebe o caminho em arg1). Sem associacao, o pedido vai para o kernel.' }),
+      rows, el('div', { class: 'tool' }, el('button', { text: '+ Associacao', onclick: () => addRow() }), el('button', { text: 'Salvar', onclick: saveAssoc }),
+        el('button', { text: 'Padroes', onclick: () => fill(DEFAULT_ASSOC) })), ast),
     el('div', {}, el('h4', { text: 'Backend' }), el('div', { text: 'Modo atual: ' + Bridge.mode }),
       el('div', { class: 'tool' }, el('button', { text: 'Testar conexao', onclick: async () => { try { const t = performance.now(); await Bridge.bash('echo', 'teste'); status.textContent = 'OK (' + Math.round(performance.now() - t) + 'ms) - modo ' + Bridge.mode; } catch (e) { status.textContent = 'Falhou: ' + e.message; } } }), el('button', { text: 'Reiniciar o risky OS', onclick: () => location.reload() })), status));
   body.append(box);
 } };
+
+/* ==================== ABRIR ARQUIVOS: associacoes + kernel ==================== */
+const DEFAULT_ASSOC = { txt: 'app:notepad', md: 'app:notepad', json: 'app:notepad', log: 'app:notepad', html: 'app:notepad', css: 'app:notepad', js: 'app:notepad', csv: 'app:notepad' };
+const extOf = p => { const n = norm(p).split('/').pop(); const i = n.lastIndexOf('.'); return i > 0 ? n.slice(i + 1).toLowerCase() : ''; };
+
+async function loadAssoc() {            // le /system/associations.json; sem arquivo => padroes
+  let raw = ''; try { raw = await Bridge.bash('cat', CFG.assocPath); } catch (e) { return { ...DEFAULT_ASSOC }; }
+  if (!raw.trim()) return { ...DEFAULT_ASSOC };
+  try {
+    const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('nao e um objeto');
+    const o = {}; for (const [k, v] of Object.entries(j)) o[String(k).trim().toLowerCase().replace(/^\./, '')] = String(v); return o;
+  } catch (e) { toast('associations.json invalido (' + e.message + ') - usando os padroes', 'err'); return { ...DEFAULT_ASSOC }; }
+}
+
+async function openFile(path) {
+  path = norm(path); const ext = extOf(path);
+  if (!ext) return WM.open(Apps.notepad, { file: path });            // sem extensao: bloco de notas
+  const h = (await loadAssoc())[ext];
+  if (h) return runHandler(h.trim(), path);
+  openViaKernel(ext, path);                                          // sem associacao: pergunta ao kernel
+}
+
+async function runHandler(h, path) {
+  if (h.startsWith('app:')) {                                         // programa do proprio desktop
+    const id = h.slice(4).trim(), app = Apps[id];
+    if (!app) return toast('Associacao invalida: o app "' + id + '" nao existe', 'err');
+    return WM.open(app, id === 'files' ? { dir: parentOf(path) } : { file: path });
+  }
+  const mod = h.replace(/^\/storage\/modules\//, '');                // modulo: bash <modulo> <caminho>
+  try {
+    if (!(await Bridge.bash('cat', '/storage/modules/' + mod))) return toast('Modulo "' + mod + '" nao encontrado em /storage/modules/', 'err');
+    const r = await Bridge.bash(mod, path);
+    toast(r ? mod + ': ' + r.slice(0, 220) : mod + ' executado em ' + path, r ? '' : 'ok');
+  } catch (e) { toast('Erro ao executar ' + mod + ': ' + e.message, 'err'); }
+}
+
+/* Mensagens com o kernel (via extensao iframe):
+   frontend -> kernel : '{"type":"py","path":"/exemplo.py"}'   (texto JSON; type = extensao)
+   kernel -> frontend : "OK" | "file error"; depois de OK, cada mensagem e um comando de terminal, ate "exit" */
+const Kernel = (() => {
+  const inFrame = window.parent !== window; let st = null;
+  const asText = d => typeof d === 'string' ? d : JSON.stringify(d);
+  const arm = (ms, fn) => { clearTimeout(st.timer); st.timer = setTimeout(fn, ms); };
+  const idle = () => { const s = st; if (!s) return; st = null; s.onIdle(); };
+
+  function deliver(t) {
+    if (!st) return;
+    if (st.phase === 'wait') {
+      if (/^\s*ok\s*$/i.test(t)) { st.phase = 'run'; arm(CFG.kernelIdleMs, idle); st.onOk(); }
+      else { const s = st; clearTimeout(s.timer); st = null; s.onFail(/file\s*error/i.test(t) ? 'file error (o kernel nao encontrou o arquivo)' : 'resposta inesperada do kernel: ' + t.slice(0, 80)); }
+    } else { arm(CFG.kernelIdleMs, idle); st.onLine(t); }
+  }
+  window.addEventListener('message', e => {                           // so aceita mensagens vindas da pagina do TurboWarp
+    if (!inFrame || e.source !== window.parent) return;
+    const d = e.data; if (d && typeof d === 'object' && d.__risky) return;
+    deliver(asText(d));
+  });
+
+  function mockKernel(obj) {                                          // kernel de mentira para o modo demo
+    if (!Bridge.mockHas(obj.path)) return setTimeout(() => deliver('file error'), 200);
+    ['OK', 'echo [kernel] rodando ' + obj.path + ' (tipo ' + obj.type + ')', 'mkdir /tmp/saida', 'write /tmp/saida/resultado.txt "gerado por ' + obj.path + '"',
+      'cat /tmp/saida/resultado.txt', 'ls /tmp/saida', 'echo fim', 'exit'].forEach((l, i) => setTimeout(() => deliver(l), 150 + i * 350));
+  }
+
+  function request(obj, h) {
+    if (st) return false;
+    st = { phase: 'wait', ...h };
+    arm(CFG.kernelReplyMs, () => { const s = st; st = null; s.onFail('o kernel nao respondeu em ' + CFG.kernelReplyMs / 1000 + 's'); });
+    if (inFrame) parent.postMessage(JSON.stringify(obj), '*'); else mockKernel(obj);
+    return true;
+  }
+  return { request, end() { if (st) { clearTimeout(st.timer); st = null; } }, get busy() { return !!st; } };
+})();
+
+function openViaKernel(ext, path) {
+  let term = null;
+  const sent = Kernel.request({ type: ext, path }, {
+    onOk() { term = WM.open(Apps.terminal, {}); term.api.begin(ext + ': ' + path); },
+    onLine(t) {
+      let line = t.trim();
+      if (line.startsWith('{')) { try { const j = JSON.parse(line); line = String(j.cmd || j.command || j.line || ''); } catch (e) {} }
+      if (/^exit$/i.test(line)) { Kernel.end(); term.api.end(); } else if (line) term.api.enqueue(line);
+    },
+    onIdle() { term.api.end('[o kernel parou de enviar comandos - sessao encerrada]'); },
+    onFail(msg) { toast('Nao foi possivel abrir ' + path + ': ' + msg, 'err'); }
+  });
+  if (!sent) toast('Ja existe um programa em execucao no terminal. Aguarde o "exit" ou feche o terminal dele.', 'err');
+}
+
 
 /* ==================== DESKTOP / TASKBAR / MENU ==================== */
 const order = ['files', 'notepad', 'terminal', 'inspector', 'settings'];
@@ -558,23 +563,6 @@ order.forEach(id => {
   n.addEventListener('dblclick', () => WM.open(a)); iconsBox.append(n);
   menu.append(el('div', { text: a.icon + '  ' + a.title, onclick: () => { menu.classList.remove('show'); WM.open(a); } }));
 });
-let desktopRefresh = 0;
-async function refreshDesktop() {
-  const generation = ++desktopRefresh;
-  const prefix = CFG.desktopDir + '/';
-  const paths = (await listFS()).filter(p => p.startsWith(prefix) && !p.slice(prefix.length).includes('/') && /\.shortcut$/i.test(p)).sort();
-  if (generation !== desktopRefresh) return;
-  iconsBox.querySelectorAll('.dshortcut').forEach(n => n.remove());
-  paths.forEach(path => {
-    const name = path.slice(prefix.length).replace(/\.shortcut$/i, '');
-    const n = el('div', { class: 'dicon dshortcut', title: path }, el('div', { class: 'g', text: '🌐' }), el('div', { class: 't', text: name }));
-    n.addEventListener('click', () => { [...iconsBox.children].forEach(c => c.classList.remove('sel')); n.classList.add('sel'); });
-    n.addEventListener('dblclick', () => openPath(path).catch(showError));
-    iconsBox.append(n);
-  });
-}
-Bridge.listeners.add(d => { if (d.mode) refreshDesktop().catch(() => {}); });
-if (Bridge.mode !== 'connecting') refreshDesktop().catch(() => {});
 menu.append(el('hr'), el('div', { text: '🔄  Reiniciar', onclick: () => location.reload() }));
 $('#start').addEventListener('click', e => { e.stopPropagation(); menu.classList.toggle('show'); });
 document.addEventListener('pointerdown', e => { if (!menu.contains(e.target) && e.target.id !== 'start') menu.classList.remove('show'); iconsBox.contains(e.target) || [...iconsBox.children].forEach(c => c.classList.remove('sel')); });
